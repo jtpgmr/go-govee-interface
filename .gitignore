@@ -1,0 +1,6 @@
+# Binaries for programs and output files
+*.exe
+*.out
+
+# Sensitive info
+*.env
