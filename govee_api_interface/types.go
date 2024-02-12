@@ -26,8 +26,8 @@ type GoveeDevice struct {
 }
 
 // Data represents the structure of the "data" field in the response
-type GoveeDevices struct {
-    Devices []GoveeDevice `json:"devices"`
+type GetDevicesData struct {
+    Devices []GoveeDevice `json:"devices,omitempty"`
 }
 
 // Range represents the structure of a range object
@@ -51,31 +51,31 @@ const (
 )
 
 type ControlDevicesCmd struct {
-    name SupportedCommand
-    value interface{}
+    Name SupportedCommand   `json:"name"`
+    Value interface{}   `json:"value"`
 }
 
 type ControlDevicesRequestBody struct {
-    device string
-    model string
-    cmd ControlDevicesCmd
+    Device string   `json:"device"`
+    Model string    `json:"model"`
+    Cmd ControlDevicesCmd   `json:"cmd"`
 }
 
 type GoveeResponseDetails struct {
     Message string   `json:"message"`
     StatusCode    int      `json:"code"`
-    Data    GoveeDevices     `json:"data"`
     HasErrors bool  `json:"hasErrors"`
-    Err       error `json:"error"`
+    Data       interface{}   `json:"data,omitempty"` // Omit if nil
+    Err        *string           `json:"error,omitempty"` // Omit if nil
 }
 
 type ResponseDetailsFunc func(*GoveeResponseDetails)
 
-func SucessfulResponse(message string, statusCode int, data GoveeDevices) ResponseDetailsFunc {
+func SucessfulResponse(message string, statusCode int, data interface{}) ResponseDetailsFunc {
     return func(r *GoveeResponseDetails) {
         r.Message = message
         r.StatusCode = statusCode
-        r.Data = data
+        r.Data = &data
         r.HasErrors = false
         r.Err = nil
     }
@@ -86,9 +86,12 @@ func FailureResponse(message string, statusCode int, err error) ResponseDetailsF
         r.Message = message
         r.StatusCode = statusCode
         r.HasErrors = true
-        r.Err = err
+        errMsg := err.Error()
+        r.Err = &errMsg
+        r.Data = nil
     }
 }
+
 func NewGoveeAPIResponse(functions ...ResponseDetailsFunc) *GoveeResponseDetails {
     response := &GoveeResponseDetails{}
 

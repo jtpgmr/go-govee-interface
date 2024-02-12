@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	utils "govee-smart-tech-interface/utils"
 	"io"
 	"net/http"
 	"strings"
@@ -20,15 +21,15 @@ func NewGoveeAPI(apiKey string) *GoveeAPIInterface {
 }
 
 func validateCmd(cmd ControlDevicesCmd, value string) error {
-	switch cmd.name {
+	switch cmd.Name {
         case TURN:
-            name := strings.ToLower(string(cmd.name))
+            name := strings.ToLower(string(cmd.Name))
             if name != "on" && name != "off" {
                 return errors.New("Invalid value for 'turn' command. Valid values are: 'on', 'off'")
             }
 
 		case BRIGHTNESS:
-            brightnessLevel, isInt := cmd.value.(int)
+            brightnessLevel, isInt := cmd.Value.(int)
             
             if !isInt {
                 return errors.New("Value for brightness must be an integer")
@@ -50,10 +51,28 @@ func validateCmd(cmd ControlDevicesCmd, value string) error {
 // Instance to send request
 var client = &http.Client{}
 
+type CreateGoveeAPIRequestProps struct {
+    method HttpMethod
+    endpoint GoveeEndpoints
+    successMessage string
+    deviceName *string
+    body *ControlDevicesRequestBody
+    queryParams    *map[string]string
+}
+
 // GetDevices retrieves devices from the Govee API
-func (gAPI *GoveeAPIInterface) CreateGoveeAPIRequest(method HttpMethod, endPoint string, successMessage string, body ...*ControlDevicesRequestBody) string {
+func (gAPI *GoveeAPIInterface) CreateGoveeAPIRequest(props *CreateGoveeAPIRequestProps) string {
+    method := props.method
+    endpointUrl := gAPI.BaseURL + string(props.endpoint)
+
+    // checks for query params and adds them to endpointUrl if applicable
+    if props.queryParams != nil {
+        utils.ApplyQueryParams(&endpointUrl, *props.queryParams)
+    }
+
+    
     // Create a new request
-    req, err := http.NewRequest(string(method), gAPI.BaseURL + endPoint, nil)
+    req, err := http.NewRequest(string(method), endpointUrl, nil)
     if err != nil {
         response := NewGoveeAPIResponse(FailureResponse("Error creating request", 500, err))
         responseJSON, _ := json.Marshal(response) 
@@ -67,11 +86,13 @@ func (gAPI *GoveeAPIInterface) CreateGoveeAPIRequest(method HttpMethod, endPoint
     // Add headers to the request
     req.Header.Set("Content-Type", "application/json")
     req.Header.Set("Govee-API-Key", gAPI.APIKey)
+
+    body := props.body
     
-    if method == PUT && len(body) > 0 && body[0] != nil {
+    if method == PUT && body != nil {
         var buf bytes.Buffer
         // shorthand error handling is used when only evaluating the err that is returned
-        if err := json.NewEncoder(&buf).Encode(body[0]); err != nil {
+        if err := json.NewEncoder(&buf).Encode(body); err != nil {
             response := NewGoveeAPIResponse(FailureResponse("Error encoding body", 500, err))
             responseJSON, _ := json.Marshal(response) // Ignore error here
             if err != nil {
@@ -113,15 +134,35 @@ func (gAPI *GoveeAPIInterface) CreateGoveeAPIRequest(method HttpMethod, endPoint
     var responseData GoveeResponseDetails
     if err := json.Unmarshal(resBody, &responseData); err != nil {
         response := NewGoveeAPIResponse(FailureResponse("Error unmarshalling response", 500, err))
-        responseJSON, _ := json.Marshal(response) // Ignore error here
+        responseJSON, _ := json.Marshal(response) 
         return string(responseJSON)
     }
+    
+    var jsonData []byte
+    // fmt.Println(responseData.Data)
+
+    // if props.deviceName != nil {
+    //     var filteredDevices []GoveeDevice
+    //     for _, device := range responseData.Data.Devices {
+    //         if device.DeviceName == *props.deviceName {
+    //             filteredDevices = append(filteredDevices, device)
+    //         }
+    //     }
+
+    //     if filteredDevices == nil {
+    //         response := NewGoveeAPIResponse(FailureResponse("Error searching for specified device", 404, fmt.Errorf("Device with the name %s was not found", *props.deviceName)))
+    //         responseJSON, _ := json.Marshal(response) 
+    //         return string(responseJSON)
+    //     }
+
+    //     responseData.Data.Devices = filteredDevices
+    // } 
 
     // Marshal the response data back to JSON
-    jsonData, err := json.Marshal(responseData)
+    jsonData, err = json.Marshal(responseData)
     if err != nil {
         response := NewGoveeAPIResponse(FailureResponse("Error marshalling JSON response", 500, err))
-        responseJSON, _ := json.Marshal(response) // Ignore error here
+        responseJSON, _ := json.Marshal(response) 
         return string(responseJSON)
     }
 
@@ -129,17 +170,55 @@ func (gAPI *GoveeAPIInterface) CreateGoveeAPIRequest(method HttpMethod, endPoint
     return string(jsonData)
 }
 
+type GoveeEndpoints string
+const (
+    // endpoints for LPS
+    GetDevices    GoveeEndpoints = "/v1/devices"
+    GetDeviceState   GoveeEndpoints = GetDevices + "/state"
+    UpdateDeviceSettings    GoveeEndpoints = GetDevices + "/control"
+)
+
 // gets devices associated with API key
 func (gAPI *GoveeAPIInterface) GetDevices(deviceName *string) string {
     var successMessage string 
     if deviceName != nil {
-        successMessage = "Details for device named " + *deviceName + "successfully retrieved"
+        successMessage = "Details for device named" + " " + *deviceName + " " + "successfully retrieved"
     } else {
         successMessage = "Details for all devices retrieved"
     }
-    return gAPI.CreateGoveeAPIRequest(GET, "/v1/devices", successMessage)
+
+    inputProps := CreateGoveeAPIRequestProps{
+        method: GET,
+        endpoint: GetDevices,
+        successMessage: successMessage,
+        deviceName: deviceName,
+    }
+
+    return gAPI.CreateGoveeAPIRequest(&inputProps)
 }
 
-// func (gAPI *GoveeAPIInterface) GetDevices() (string, []byte, error) {
-//     return gAPI.CreateGoveeAPIRequest(GET, "/v1/devices")
-// }
+// query the state of the device
+// need to make a db connection which obtains the model if not already defined
+func (gAPI *GoveeAPIInterface) GetDeviceState(macAddress string, model string) string {
+    inputProps := CreateGoveeAPIRequestProps{
+        method: GET,
+        endpoint: GetDeviceState,
+        queryParams: &map[string]string{
+            "device": macAddress,
+            "model": model,
+        },
+    }
+
+    return gAPI.CreateGoveeAPIRequest(&inputProps)
+}
+
+// query the state of the device
+func (gAPI *GoveeAPIInterface) UpdateDeviceSettings(body ControlDevicesRequestBody) string {
+    inputProps := CreateGoveeAPIRequestProps{
+        method: PUT,
+        endpoint: UpdateDeviceSettings,
+        body: &body,
+    }
+
+    return gAPI.CreateGoveeAPIRequest(&inputProps)
+}
